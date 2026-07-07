@@ -15,8 +15,13 @@
         .img-card { width: 110px; height: 110px; border: 1px solid #e9edef; border-radius: 6px; position: relative; background: #fff; cursor: grab; user-select: none; overflow: hidden; }
         .img-card:active { cursor: grabbing; }
         .img-card img { width: 100%; height: 100%; object-fit: cover; }
-        .img-card .delete-btn { position: absolute; top: 4px; right: 4px; background: rgba(239, 68, 68, 0.9); color: white; border: none; border-radius: 4px; padding: 2px 6px; cursor: pointer; font-size: 10px; font-weight: bold; }
+        .img-card .delete-btn { position: absolute; top: 4px; right: 4px; background: rgba(239, 68, 68, 0.9); color: white; border: none; border-radius: 4px; padding: 2px 6px; cursor: pointer; font-size: 10px; font-weight: bold; z-index: 10; }
         .img-card .delete-btn:hover { background: #dc2626; }
+        .img-card .copy-btn { position: absolute; bottom: 4px; left: 4px; right: 4px; background: rgba(0, 128, 105, 0.9); color: white; border: none; border-radius: 4px; padding: 4px 0; cursor: pointer; font-size: 9px; font-weight: bold; text-align: center; opacity: 0.9; transition: background 0.2s ease; z-index: 10; }
+        .img-card:hover .copy-btn { opacity: 1; }
+        .img-card .copy-btn.copied { background: rgba(16, 185, 129, 0.95); }
+        .img-card .copy-btn:hover { background: #006e5a; }
+        .img-card .copy-btn.copied:hover { background: #059669; }
         textarea { width: 100%; height: 150px; padding: 12px; border: 1px solid #bac0c4; border-radius: 6px; box-sizing: border-box; font-size: 15px; line-height: 1.4; resize: vertical; }
         textarea:focus { border-color: #00a884; outline: none; }
         .controls { display: flex; justify-content: space-between; align-items: center; }
@@ -75,6 +80,7 @@
 
             const savedImages = JSON.parse(sessionStorage.getItem('wa_saved_images') || '[]');
             savedImages.forEach(base64 => createImageCard(base64, false));
+            updateImageIndices();
         });
 
         function saveStateToSession() {
@@ -111,18 +117,61 @@
             card.draggable = true;
             card.dataset.base64 = base64Data;
 
-            card.innerHTML = `<img src="${base64Data}"><button class="delete-btn">X</button>`;
+            card.innerHTML = `
+                <img src="${base64Data}">
+                <button class="delete-btn" title="Delete">X</button>
+                <button class="copy-btn">Copy Image</button>
+            `;
             
             card.querySelector('.delete-btn').addEventListener('click', () => {
                 card.remove();
                 saveStateToSession();
+                updateImageIndices();
+            });
+
+            const copyBtn = card.querySelector('.copy-btn');
+            copyBtn.addEventListener('click', async (e) => {
+                e.stopPropagation();
+                try {
+                    const imgResponse = await fetch(base64Data);
+                    const blob = await imgResponse.blob();
+                    await navigator.clipboard.write([
+                        new ClipboardItem({ [blob.type]: blob })
+                    ]);
+                    copyBtn.innerText = "✓ Copied!";
+                    copyBtn.classList.add('copied');
+                    
+                    toast.innerText = "✓ Image copied! Now paste it to WhatsApp.";
+                    toast.classList.add('show');
+                    setTimeout(() => toast.classList.remove('show'), 2000);
+                } catch (err) {
+                    console.error("Failed to copy image", err);
+                    toast.innerText = "✗ Copy failed";
+                    toast.classList.add('show');
+                    setTimeout(() => toast.classList.remove('show'), 2000);
+                }
             });
 
             card.addEventListener('dragstart', () => { draggedItem = card; });
-            card.addEventListener('dragend', () => { draggedItem = null; saveStateToSession(); });
+            card.addEventListener('dragend', () => { draggedItem = null; saveStateToSession(); updateImageIndices(); });
 
             imageBucket.appendChild(card);
             if (appendToStorage) saveStateToSession();
+            updateImageIndices();
+        }
+
+        function updateImageIndices() {
+            const cards = imageBucket.querySelectorAll('.img-card');
+            cards.forEach((card, index) => {
+                const copyBtn = card.querySelector('.copy-btn');
+                if (copyBtn) {
+                    if (copyBtn.classList.contains('copied')) {
+                        copyBtn.innerText = `✓ Copied #${index + 1}`;
+                    } else {
+                        copyBtn.innerText = `Copy Image #${index + 1}`;
+                    }
+                }
+            });
         }
 
         // --- DRAG ARRANGEMENTS ---
@@ -145,23 +194,25 @@
             const textValue = textEditor.value;
 
             try {
+                await navigator.clipboard.writeText(textValue);
+                
                 if (cards.length > 0) {
-                    // Copy visual images onto system memory ring
-                    const imgResponse = await fetch(cards[0].dataset.base64);
-                    const blob = await imgResponse.blob();
-
-                    await navigator.clipboard.write([
-                        new ClipboardItem({ [blob.type]: blob })
-                    ]);
-                    toast.innerText = "✓ Copied first image! Paste to WhatsApp, then copy your text layout.";
+                    // Reset all copy buttons to uncopied state to guide sequence
+                    imageBucket.querySelectorAll('.img-card .copy-btn').forEach((btn, index) => {
+                        btn.classList.remove('copied');
+                        btn.innerText = `Copy Image #${index + 1}`;
+                    });
+                    toast.innerText = "✓ Text copied! Now copy the images below one by one.";
                 } else {
-                    await navigator.clipboard.writeText(textValue);
                     toast.innerText = "✓ Message text copied!";
                 }
                 toast.classList.add('show');
                 setTimeout(() => toast.classList.remove('show'), 3500);
             } catch (err) {
                 console.error("Clipboard assignment failed", err);
+                toast.innerText = "✗ Copy failed";
+                toast.classList.add('show');
+                setTimeout(() => toast.classList.remove('show'), 3500);
             }
         });
     </script>
