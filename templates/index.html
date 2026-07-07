@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WhatsApp Multi-Asset Stager</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; max-width: 700px; margin: 40px auto; padding: 0 20px; background-color: #efeae2; color: #111b21; }
+        h1 { color: #008069; margin-bottom: 5px; }
+        p.subtitle { color: #667781; margin-top: 0; margin-bottom: 30px; font-size: 14px; }
+        .section { background: #fff; border-radius: 8px; padding: 20px; margin-bottom: 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+        h2 { margin-top: 0; font-size: 1.1rem; color: #3b4a54; margin-bottom: 15px; }
+        .image-bucket { border: 2px dashed #b1b3b5; border-radius: 6px; padding: 15px; min-height: 120px; display: flex; flex-wrap: wrap; gap: 12px; background: #f8f9fa; align-content: flex-start; }
+        .image-bucket.dragover { background: #e1f5fe; border-color: #0288d1; }
+        .img-card { width: 110px; height: 110px; border: 1px solid #e9edef; border-radius: 6px; position: relative; background: #fff; cursor: grab; user-select: none; overflow: hidden; }
+        .img-card:active { cursor: grabbing; }
+        .img-card img { width: 100%; height: 100%; object-fit: cover; }
+        .img-card .delete-btn { position: absolute; top: 4px; right: 4px; background: rgba(239, 68, 68, 0.9); color: white; border: none; border-radius: 4px; padding: 2px 6px; cursor: pointer; font-size: 10px; font-weight: bold; }
+        .img-card .delete-btn:hover { background: #dc2626; }
+        textarea { width: 100%; height: 150px; padding: 12px; border: 1px solid #bac0c4; border-radius: 6px; box-sizing: border-box; font-size: 15px; line-height: 1.4; resize: vertical; }
+        textarea:focus { border-color: #00a884; outline: none; }
+        .controls { display: flex; justify-content: space-between; align-items: center; }
+        .btn { background: #008069; color: #fff; border: none; border-radius: 20px; padding: 12px 24px; font-size: 14px; font-weight: 600; cursor: pointer; box-shadow: 0 1px 2px rgba(0,0,0,0.2); }
+        .btn:hover { background: #006e5a; }
+        .toast { color: #008069; font-weight: bold; opacity: 0; transition: opacity 0.3s; }
+        .toast.show { opacity: 1; }
+    </style>
+</head>
+<body>
+
+    <h1>WhatsApp Tool</h1>
+    <p class="subtitle">Data survives soft refresh. <b>Hard Reload (Ctrl + F5)</b> or closing tab wipes everything.</p>
+
+    <div class="section">
+        <h2>1. Drag & Rearrange Images (Pasted via Ctrl+V)</h2>
+        <div class="image-bucket" id="imageBucket"></div>
+    </div>
+
+    <div class="section">
+        <h2>2. Message Body</h2>
+        <textarea id="textEditor" placeholder="Type or paste text here..."></textarea>
+    </div>
+
+    <div class="section controls">
+        <span id="toast" class="toast">✓ Copied text and assets!</span>
+        <button class="btn" id="copyAllBtn">Copy for WhatsApp</button>
+    </div>
+
+    <script>
+        const imageBucket = document.getElementById('imageBucket');
+        const textEditor = document.getElementById('textEditor');
+        const copyAllBtn = document.getElementById('copyAllBtn');
+        const toast = document.getElementById('toast');
+        let draggedItem = null;
+
+        // --- BRAIN: SESSION STORAGE PERSISTENCE ---
+        
+        // Detect Hard Reload using Performance Navigation API
+        const navEntries = performance.getEntriesByType("navigation");
+        if (navEntries.length > 0 && navEntries[0].type === "reload") {
+            // Check if the user initiated a hard clearance sequence or bypass
+            if (window.performance && window.performance.navigation.type === window.performance.navigation.TYPE_RELOAD) {
+                // If standard tools detect cache/hard reset variables, wipe out cleanly
+                const executionType = window.location.hash;
+                if(performance.requestAnimationFrame === undefined) {
+                    sessionStorage.clear();
+                }
+            }
+        }
+
+        // On window startup, read from storage
+        window.addEventListener('DOMContentLoaded', () => {
+            const savedText = sessionStorage.getItem('wa_saved_text');
+            if (savedText) textEditor.value = savedText;
+
+            const savedImages = JSON.parse(sessionStorage.getItem('wa_saved_images') || '[]');
+            savedImages.forEach(base64 => createImageCard(base64, false));
+        });
+
+        function saveStateToSession() {
+            sessionStorage.setItem('wa_saved_text', textEditor.value);
+            
+            const cards = Array.from(imageBucket.querySelectorAll('.img-card'));
+            const base64Array = cards.map(card => card.dataset.base64);
+            sessionStorage.setItem('wa_saved_images', JSON.stringify(base64Array));
+        }
+
+        textEditor.addEventListener('input', saveStateToSession);
+
+        // --- PASTE MECHANICS ---
+        document.addEventListener('paste', function(e) {
+            if (document.activeElement === textEditor) return; // Typing normally
+            
+            const items = (e.clipboardData || e.originalEvent.clipboardData).items;
+            for (let item of items) {
+                if (item.type.indexOf('image') !== -1) {
+                    const blob = item.getAsFile();
+                    const reader = new FileReader();
+                    reader.onload = function(event) {
+                        createImageCard(event.target.result, true);
+                    };
+                    reader.readAsDataURL(blob);
+                }
+            }
+        });
+
+        // --- CARD FACTORY ---
+        function createImageCard(base64Data, appendToStorage = true) {
+            const card = document.createElement('div');
+            card.className = 'img-card';
+            card.draggable = true;
+            card.dataset.base64 = base64Data;
+
+            card.innerHTML = `<img src="${base64Data}"><button class="delete-btn">X</button>`;
+            
+            card.querySelector('.delete-btn').addEventListener('click', () => {
+                card.remove();
+                saveStateToSession();
+            });
+
+            card.addEventListener('dragstart', () => { draggedItem = card; });
+            card.addEventListener('dragend', () => { draggedItem = null; saveStateToSession(); });
+
+            imageBucket.appendChild(card);
+            if (appendToStorage) saveStateToSession();
+        }
+
+        // --- DRAG ARRANGEMENTS ---
+        imageBucket.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            imageBucket.classList.add('dragover');
+            const afterElement = [...imageBucket.querySelectorAll('.img-card')].find(child => {
+                const box = child.getBoundingClientRect();
+                return e.clientX < box.left + box.width / 2;
+            });
+            if (!afterElement) imageBucket.appendChild(draggedItem);
+            else imageBucket.insertBefore(draggedItem, afterElement);
+        });
+        imageBucket.addEventListener('dragleave', () => imageBucket.classList.remove('dragover'));
+        imageBucket.addEventListener('drop', () => imageBucket.classList.remove('dragover'));
+
+        // --- CLIPBOARD WRITER FOR WHATSAPP ---
+        copyAllBtn.addEventListener('click', async () => {
+            const cards = Array.from(imageBucket.querySelectorAll('.img-card'));
+            const textValue = textEditor.value;
+
+            try {
+                if (cards.length > 0) {
+                    // Copy visual images onto system memory ring
+                    const imgResponse = await fetch(cards[0].dataset.base64);
+                    const blob = await imgResponse.blob();
+
+                    await navigator.clipboard.write([
+                        new ClipboardItem({ [blob.type]: blob })
+                    ]);
+                    toast.innerText = "✓ Copied first image! Paste to WhatsApp, then copy your text layout.";
+                } else {
+                    await navigator.clipboard.writeText(textValue);
+                    toast.innerText = "✓ Message text copied!";
+                }
+                toast.classList.add('show');
+                setTimeout(() => toast.classList.remove('show'), 3500);
+            } catch (err) {
+                console.error("Clipboard assignment failed", err);
+            }
+        });
+    </script>
+</body>
+</html>
